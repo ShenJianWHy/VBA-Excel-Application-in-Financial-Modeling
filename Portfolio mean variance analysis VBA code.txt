@@ -1,0 +1,256 @@
+Option Explicit
+Option Base 1
+Public Function getMonthlyPortLogRet(asset1 As Range, asset2 As Range, proportionAsset1 As Double, Optional flag As Boolean) As Variant
+
+    Dim n1 As Integer, n2 As Integer
+    Dim ret1() As Variant, ret2() As Variant, temp() As Variant
+    Dim i As Integer
+    
+    n1 = asset1.Rows.Count
+    n2 = asset2.Rows.Count
+    
+    If n1 <> n2 Then
+        getMonthlyPortLogRet = "Counts not equal"
+        Exit Function
+    End If
+    
+    ReDim ret1(n1 - 1, 1)
+    ReDim ret2(n1 - 1, 1)
+    ReDim temp(n1 - 1, 1)
+    
+    If flag = False Then
+        For i = 1 To n1 - 1
+            ret1(i, 1) = Log(asset1.Cells(i + 1, 1) / asset1.Cells(i, 1))
+            ret2(i, 1) = Log(asset2.Cells(i + 1, 1) / asset2.Cells(i, 1))
+            temp(i, 1) = ret1(i, 1) * proportionAsset1 + ret2(i, 1) * (1 - proportionAsset1)
+        Next i
+    Else
+        For i = 1 To n1 - 1
+            ret1(i, 1) = Log(asset1.Cells(i, 1) / asset1.Cells(i + 1, 1))
+            ret2(i, 1) = Log(asset2.Cells(i, 1) / asset2.Cells(i + 1, 1))
+            temp(i, 1) = ret1(i, 1) * proportionAsset1 + ret2(i, 1) * (1 - proportionAsset1)
+         Next i
+    End If
+    
+    getMonthlyPortLogRet = temp
+    
+End Function
+
+Public Function portfolio_mean_return(asset1 As Range, asset2 As Range, proportionAsset1 As Double, Optional flag As Boolean) As Variant
+
+    portfolio_mean_return = Application.Average(getMonthlyPortLogRet(asset1, asset2, proportionAsset1, flag)) * 12 'annulize average monthly return
+
+End Function
+
+
+Public Function portfolio_variance(asset1 As Range, asset2 As Range, proportionAsset1 As Double, Optional flag As Boolean) As Variant
+
+'Call getMonthlyPortLogRet(asset1, asset2, proportionAsset1) defined before
+
+    portfolio_variance = Application.Var_P(getMonthlyPortLogRet(asset1, asset2, proportionAsset1, flag)) * 12
+
+End Function
+
+Public Function sharpe_ratio(asset1 As Range, asset2 As Range, proportionAsset1 As Double, riskFree As Range, Optional flag As Boolean) As Variant
+Dim rf As Double
+Dim n, i As Integer
+Dim ret(), tem() As Variant
+n = riskFree.Rows.Count
+ReDim ret(n - 1, 1)
+ReDim tem(n - 1, 1)
+If flag = False Then
+    For i = 1 To n - 1
+        ret(i, 1) = Log(riskFree.Cells(i + 1, 1) / riskFree.Cells(i, 1))
+    Next i
+Else
+    For i = 1 To n - 1
+        ret(i, 1) = Log(riskFree.Cells(i, 1) / riskFree.Cells(i + 1, 1))
+    Next i
+End If
+    rf = Application.Average(ret) * 12
+    sharpe_ratio = (portfolio_mean_return(asset1, asset2, proportionAsset1, flag) - rf) _
+                  / (Sqr(portfolio_variance(asset1, asset2, proportionAsset1, flag)) * Sqr(12))
+
+End Function
+
+
+Sub Portfolio_Analysis()
+'________________________________________________________________________
+
+'**********************************************************************
+'to see whether the data is sorted from the oldest to the newest or not
+'and give boolean value to variable denote(used in UDFs)
+'**********************************************************************
+Dim denote As Boolean 'using denote to indecate the price is sorted from oldest to newsest(denote=false);true for opsite situation
+
+If Cells(6, 1).Value < Cells(7, 1).Value Then
+    denote = False
+Else
+    denote = True
+End If
+Debug.Print "denote", denote
+
+Range("Y14").Value = denote
+
+'________________________________________________________________________
+
+Dim n1, n2 As Integer
+Dim ws As Worksheet
+Dim lastrow As Integer
+Dim i, j As Integer
+
+Set ws = ThisWorkbook.Worksheets("PortAnalysis")
+ws.Activate
+lastrow = ws.Cells(Rows.Count, "A").End(xlUp).Row 'get the index of lastrow of original data
+
+Debug.Print lastrow
+'**********************************************************************
+'get monthly log return data for two risky assets and riskfree asset
+'**********************************************************************
+
+For i = 7 To lastrow
+    Cells(i, 3).Value = Log(Cells(i, 2) / Cells(i - 1, 2)) 'return of asset 1
+    Cells(i, 6).Value = Log(Cells(i, 5) / Cells(i - 1, 5)) 'return of asset 2
+    Cells(i, 9).Value = Log(Cells(i, 8) / Cells(i - 1, 8)) 'riskfree asset
+
+Next i
+'unify format
+Range("C7:C" & lastrow).NumberFormat = "0.00%"
+Range("F7:F" & lastrow).NumberFormat = "0.00%"
+Range("I7:I" & lastrow).NumberFormat = "0.00%"
+Dim rng1, rng2, rng3, rng As Range
+Set rng1 = Range("C7:C" & lastrow)
+Set rng2 = Range("F7:F" & lastrow)
+Set rng3 = Range("I7:I" & lastrow)
+Set rng = Union(rng1, rng2, rng3)
+With rng
+    .NumberFormat = "0.000%"
+    .Interior.ThemeColor = xlThemeColorAccent6
+    .Interior.PatternColorIndex = xlAutomatic
+    .Interior.TintAndShade = 0.799981688894314
+End With
+'**********************************************************************
+'get expected return, std deviation, correlation matrix, variance-covariance matrix(VCV matrix)
+'note that we annualize the output
+'**********************************************************************
+Range("O5").Value = Application.Average(Range("I6:I" & lastrow)) * 12 'calculate riskfree rate using 13-week TBills rate
+Range("L5").Value = Application.Average(Range("C7:C" & lastrow)) * 12 'calculate annualized expected return of asset1
+Range("L6").Value = Application.Average(Range("F7:F" & lastrow)) * 12 'calculate annualizedexpected return of asset2
+'calculate std deviation
+Range("M5").Value = Application.StDev_P(Range("C7:C" & lastrow)) * Sqr(12)
+Range("M6").Value = Application.StDev_P(Range("F7:F" & lastrow)) * Sqr(12)
+'calculate variance-covariance matrix(VCV) and Correlation Matrix
+
+Range("L9").Value = Application.Correl(rng1, rng1)
+Range("M9").Value = Application.Correl(rng1, rng2)
+Range("M10").Value = Application.Correl(rng2, rng2)
+Range("L10").Value = Range("M9") 'covariance-variance matrix is symetric
+
+Range("P9:P10").FormulaArray = _
+                "=MMULT(MINVERSE(L13:M14),U9:U10)/MMULT(TRANSPOSE(U9:U10),MMULT(MINVERSE(L13:M14),U9:U10))"
+Range("P13:P14").FormulaArray = _
+"=MMULT(MINVERSE(L13:M14),(L5:L6-O5*U9:U10)/MMULT(TRANSPOSE(U9:U10),MMULT(MINVERSE(L13:M14),(L5:L6-O5*U9:U10))))"
+
+Range("L13").Value = Application.Covar(rng1, rng1) * 12
+Range("M13").Value = Application.Covar(rng1, rng2) * 12
+Range("M14").Value = Application.Covar(rng2, rng2) * 12 'Anualized
+Range("L14").Value = Range("M13")
+
+Range("S9").Formula = "=SUMPRODUCT($L$5:$L$6,P9:P10)"
+Range("T10").FormulaArray = "=SQRT(MMULT(TRANSPOSE(P9:P10),MMULT(($L$13:$M$14),P9:P10)))"
+Range("S13").Formula = "=SUMPRODUCT($L$5:$L$6,P13:P14)"
+Range("T14").FormulaArray = "=SQRT(MMULT(TRANSPOSE(P13:P14),MMULT(($L$13:$M$14),P13:P14)))"
+
+
+
+'std deviation of minimal variance portfolio
+Range("S10").Value = Sqr(portfolio_variance(Range("B6:B" & lastrow), Range("E6:E" & lastrow), Range("P9"), denote))
+'std deviation of Optimal Risky Portfolio(the tangent point)
+Range("S14").Value = Sqr(portfolio_variance(Range("B6:B" & lastrow), Range("E6:E" & lastrow), Range("P13"), denote))
+
+
+'**********************************************************************
+'Data output -- different portfolio std deviations & sharp ratio & portfolio return
+'with respect to different assets weights
+'**********************************************************************
+
+
+Set rng1 = Range("B6:B" & lastrow)
+Set rng2 = Range("E6:E" & lastrow)
+Set rng3 = Range("H6:H" & lastrow)
+For i = 23 To 66
+    Cells(i, 13).Formula = _
+        "= Sqrt(portfolio_variance((" + rng1.Address + "),(" + rng2.Address + ")," + Cells(i, 11).Address(False, False) + " , Y14))"
+    Cells(i, 14).Formula = "=portfolio_mean_return((" + rng1.Address + "),(" + rng2.Address + ")," + Cells(i, 11).Address(False, False) + " , Y14)"
+        
+    Cells(i, 16).Formula = "= sharpe_ratio((" + rng1.Address + "),(" + rng2.Address + "), " + Cells(i, 11).Address(False, False) + ",(" + rng3.Address + "), Y14)"
+    Range("M23:N65").NumberFormat = "0.00%"
+    Cells(i, 12).Formula = _
+    "= portfolio_variance((" + rng1.Address + "),(" + rng2.Address + ")," + Cells(i, 11).Address(False, False) + " , Y14)"
+Next i
+    
+    Range("L67").Formula = _
+    "= portfolio_variance((" + rng1.Address + "),(" + rng2.Address + ")," + Range("k67").Address(False, False) + " , Y14)"
+    Range("L68").Formula = _
+    "= portfolio_variance((" + rng1.Address + "),(" + rng2.Address + ")," + Range("K68").Address(False, False) + " , Y14)"
+    Range("O66") = Range("N66")
+    
+'**********************************************************************
+'Chart the sharpe ratio regarding with regard to differentportfoio weights
+'
+'**********************************************************************
+Dim x_axis, y_axis As Range
+Dim cht As Object
+Set x_axis = Range("K23:K65")
+Set y_axis = Range("P23:P65")
+'Create a chart
+  Set cht = ActiveSheet.ChartObjects.Add( _
+    Left:=Range("U35").Left, _
+    Width:=350, _
+    Top:=Range("U35").Top, _
+    Height:=250)
+'Give chart some data
+  cht.Chart.SetSourceData Source:=y_axis
+  cht.Chart.SeriesCollection(1).XValues = x_axis
+'Determine the chart type
+  cht.Chart.ChartType = xlXYScatterSmoothNoMarkers
+    With cht
+        .Chart.HasTitle = True
+        .Chart.ChartTitle.Text = _
+            "Sharpe ratio of different portfolio weights"
+        .Chart.HasLegend = False
+    End With
+End Sub
+
+
+
+Sub clearResult() 'clear contents in current worksheet
+    ThisWorkbook.Worksheets("PortAnalysis").Activate
+    Dim lastrow As Integer
+    Dim rng As Range
+    Set rng = Union(Range("P9:P10"), Range("P13:P14"), Range("S9:S10"), Range("S13:S14"), Range("T10"), Range("T14"))
+    lastrow = Cells(Rows.Count, "A").End(xlUp).Row
+    
+    Range("C7:C" & lastrow).clear
+    Range("F7:F" & lastrow).clear
+    Range("I7:I" & lastrow).clear
+    Range("L5:M6").ClearContents
+    Range("L9:M10").ClearContents
+    Range("L13:M14").ClearContents
+    Range("O5").ClearContents
+    rng.ClearContents
+    Range("L23:P66").ClearContents
+    Range("L67:L68").ClearContents
+'Delete all charts except for one charts with a specific name "Chart1"
+    Dim co As ChartObject
+    For Each co In Sheets("PortAnalysis").ChartObjects
+        If co.Name <> "Chart1" Then
+        co.Delete
+        End If
+    Next
+
+    
+End Sub
+
+
+

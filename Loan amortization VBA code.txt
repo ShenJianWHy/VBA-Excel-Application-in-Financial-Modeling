@@ -1,0 +1,556 @@
+Option Base 1
+Private Sub ExitButon_Click()
+
+AmortizationCaculator.Hide
+
+End Sub
+
+Private Sub clear_Click()
+Worksheets("LoanAmor").Activate
+Range("D13:X1048576").clear
+Range("F4:i7").ClearContents
+    
+'clear all charts
+Dim co As ChartObject
+For Each co In Sheets("LoanAmor").ChartObjects
+    co.Delete
+Next
+'cealr inputs table
+Range("B4:B9").ClearContents
+End Sub
+
+Private Sub complete_Click()
+Worksheets("LoanAmor").Activate
+'================================================================================
+'Before the calculation, clear the data calculated last time initially
+Range("D13:X1048576").clear
+Range("F4:i7").ClearContents
+    
+'clear all charts
+Dim co As ChartObject
+For Each co In Sheets("LoanAmor").ChartObjects
+    co.Delete
+Next
+'cealr inputs table
+Range("B4:B9").ClearContents
+
+'================================================================================
+
+
+Dim lastrow As Integer
+Dim Num As Integer
+Dim dateCode, Frequency As String
+Dim intRate As Double
+
+'variables intRate, loanAmnt(Loan Amount) and loanLife) are entered by user
+
+'*********************************************************************************
+'Input Robust Check and Print Parameters on Worksheet
+'*********************************************************************************
+'check if there is no input
+If loanAmnt = "" Or anualIntRate = "" Or loanLife = "" Then
+    MsgBox ("Sorry, there is no input in the userform")
+    Exit Sub
+End If
+
+'check principal is positive and the variant type
+If IsNumeric(loanAmnt) = False Or loanAmnt <= 0 Then
+    MsgBox ("please enter a positive number for principal")
+    Exit Sub
+End If
+
+'check whether the type of interest rate is number or not
+If IsNumeric(anualIntRate) = False Then
+    MsgBox ("Please enter a number of anual interest") 'interest can be either positive or negative
+    Exit Sub
+End If
+
+'check if loanLife is positive interger
+'!loanLife can't be a double when payment is annual
+'!but when payment is monthly, loanLife can be a double
+If PaymentFrequency = "Monthly" Then
+    If IsNumeric(loanLife) = False Or loanLife <= 0 Then
+        MsgBox ("please enter positive number of years for monthly payment or positive integer for annual payment")
+        Exit Sub
+    End If
+ElseIf IsNumeric(loanLife) = False Or loanLife <= 0 Then 'Annual payment situation
+        MsgBox ("please enter positive number of years for monthly payment or positive integer for annual payment")
+        Debug.Print TypeName(loanLife)
+        Exit Sub
+ElseIf Int(loanLife) / loanLife <> 1 Then 'whether loanLife is integer
+        MsgBox ("please enter positive number of years for monthly payment or positive integer for annual payment")
+        Exit Sub
+End If
+
+
+'Print Parameters on worksheet
+Cells(4, 2).Value = PaymentType
+    If PaymentType = "End of Period" Then
+        Cells(10, 2).Value = 0
+    Else
+        Cells(10, 2).Value = 1
+    End If      'this cells(10,2).value is helpful when filing the pmt function, 0 denotes end of period and
+                '1 denotes beg of period).I dont know why excel function if when logicaltest contains "string"
+                'in vba can not work in .formular1c1 format, so i have to use this redundant method
+
+Cells(5, 2).Value = loanLife
+Cells(6, 2).Value = loanAmnt
+Cells(7, 2).Value = PaymentFrequency
+Cells(8, 2).Value = anualIntRate / 100
+Range("B10").Value = numPerAfter
+Cells(9, 2).Formula = "=edate(today(),B10)" 'set the first date of payment due
+
+'---------------------------------------------------------------------------------
+' PART 1:Programming For Constant Payment Amortization
+
+'---------------------------------------------------------------------------------
+startRow = 13
+
+'According to monthly or annual amortization, use different intRate and due date of payment
+
+If PaymentFrequency = "Monthly" Then
+    dateCode = "m"
+    Num = 1
+    intRate = anualIntRate / 1200
+    Dim numPer As Integer ' numPer stands for total # of periods
+    numPer = loanLife * 12
+   
+Else
+    dateCode = "yyyy"
+    Num = 1
+    intRate = anualIntRate / 100
+    numPer = loanLife
+
+End If
+lastrow = startRow + numPer - 1
+
+'Get Date Column
+StartDate = Range("$B$9").Value
+LDate = DateAdd(dateCode, 0, StartDate)
+If PaymentFrequency = "Monthly" And PaymentType = "End of Period" Then
+    LDate = DateAdd(dateCode, Num, LDate) ' set due date of each payment
+    Debug.Print "LDate", LDate
+ElseIf PaymentFrequency = "Annualy" And PaymentType = "End of Period" Then
+    LDate = DateAdd(dateCode, Num, LDate) ' set due date of each payment
+
+End If
+'output due date
+For i = 13 To lastrow
+    Cells(i, 5).Value = LDate
+    Cells(i, 16).Value = LDate
+    LDate = DateAdd(dateCode, Num, LDate)
+Next i
+
+
+Dim pmnt As Double 'pmnt stands for payment each period
+Dim flag 'flag is a binary value to denote end or beg of period
+If PaymentType = "End of Period" Then
+    flag = 0
+Else
+    flag = 1
+End If
+Range("B11").Value = flag
+pmnt = WorksheetFunction.Pmt(intRate, numPer, -loanAmnt, , flag) 'flag = 0 for end of period, 1 for begin of period
+Debug.Print "flag", flag
+Debug.Print "pmnt", pmnt
+
+'************************************************************
+' using array to store the calculation result
+'************************************************************
+Dim begBal(), endBal(), ipPay()
+ReDim begBal(numPer + 1), endBal(numPer), ipPay(1 To numPer, 1 To 2)
+'begBal and endBal stand for beginning balance, end balance, respectively
+'ipPay is 2 dimensional array used to store interest component and principal component each period
+iCol = 1
+pCol = 2
+'initialize balance at the beginning of period 1
+begBal(1) = loanAmnt
+
+If PaymentType = "End of Period" Then
+'Loop to calculate and store period-by-period data
+    For i = 1 To numPer
+        ipPay(i, iCol) = begBal(i) * intRate
+        ipPay(i, pCol) = pmnt - ipPay(i, iCol)
+        endBal(i) = begBal(i) - ipPay(i, pCol)
+        begBal(i + 1) = endBal(i)
+    Next i
+Else ' payment type is beg of period
+    ipPay(1, iCol) = 0 'initial payment for interest
+    ipPay(1, pCol) = pmnt - ipPay(1, iCol) 'initial payment for principal
+    endBal(1) = begBal(1) - ipPay(1, pCol)
+    begBal(2) = endBal(1)
+    
+    For i = 2 To numPer
+        ipPay(i, iCol) = begBal(i) * intRate
+        ipPay(i, pCol) = pmnt - ipPay(i, iCol)
+        endBal(i) = begBal(i) - ipPay(i, pCol)
+        begBal(i + 1) = endBal(i)
+    Next i
+End If
+'************************************************************
+' Output data to worksheet
+'************************************************************
+Range("F4").Value = numPer 'output number of periods
+Range("F5").Value = intRate 'output interest rate monthly or annualy depending on the situation
+RowIndex = 12
+For i = 1 To numPer
+    Cells(RowIndex + i, 4).Value = i
+    Cells(RowIndex + i, 6).Value = begBal(i)
+    'Cells(rowIndex + i, 7).Value = pmnt
+    Cells(RowIndex + i, 7).FormulaR1C1 = "=pmt(r5c6,r4c6,-r6c2,,r11c2)"
+    Cells(RowIndex + i, 8).Value = ipPay(i, iCol)
+    Cells(RowIndex + i, 9).Value = ipPay(i, pCol)
+    Cells(RowIndex + i, 10).Value = endBal(i)
+    Cells(RowIndex + i, 11).Value = ipPay(i, iCol) / pmnt 'interest percentage in payment each period
+    Cells(RowIndex + i, 12).Value = ipPay(i, pCol) / pmnt 'principal percentage in payment each period
+Next i
+'Check the answer using function Ppmt & Ipmt
+For i = 1 To numPer
+    Cells(RowIndex + i, 13).FormulaR1C1 = "=ppmt(r5c6,rc[-9],r4c6,-r6c2,,r11c2)+ipmt(r5c6,rc[-9],r4c6,-r6c2,,r11c2)"
+Next i
+
+'---------------------------------------------------------------------------------
+' PART 2:Programming For Straight-line Amortization
+'*just repeat the first part 1 of constant payment amortization, only modify a few parameters
+'---------------------------------------------------------------------------------
+Dim pmnt4Int(), pmnt4Prin(), payment()
+ReDim begBal(numPer + 1), endBal(numPer), pmnt4Int(numPer), pmnt4Prin(numPer), payment(numPer)
+begBal(1) = loanAmnt
+If PaymentType = "End of Period" Then
+    For i = 1 To numPer
+        pmnt4Prin(i) = loanAmnt / numPer
+        pmnt4Int(i) = begBal(i) * intRate
+        endBal(i) = begBal(i) - pmnt4Prin(i)
+        begBal(i + 1) = endBal(i)
+        payment(i) = pmnt4Int(i) + pmnt4Prin(i)
+    Next i
+Else ' payment type is beg of period
+    pmnt4Prin(1) = loanAmnt / numPer
+    pmnt4Int(1) = 0
+    endBal(1) = begBal(1) - pmnt4Prin(1)
+    begBal(2) = endBal(1)
+    payment(1) = pmnt4Int(1) + pmnt4Prin(1)
+    
+    For i = 2 To numPer
+        pmnt4Prin(i) = loanAmnt / numPer
+        pmnt4Int(i) = begBal(i) * intRate
+        endBal(i) = begBal(i) - pmnt4Prin(i)
+        begBal(i + 1) = endBal(i)
+        payment(i) = pmnt4Int(i) + pmnt4Prin(i)
+    Next i
+End If
+
+'output date to worksheet
+RowIndex = 12
+For i = 1 To numPer
+    Cells(RowIndex + i, 15).Value = i
+    Cells(RowIndex + i, 17).Value = begBal(i)
+    Cells(RowIndex + i, 18).Value = payment(i)
+    Cells(RowIndex + i, 19).Value = pmnt4Int(i)
+    Cells(RowIndex + i, 20).Value = pmnt4Prin(i)
+    Cells(RowIndex + i, 21).Value = endBal(i)
+    Cells(RowIndex + i, 22).Value = pmnt4Int(i) / payment(i) 'interest percentage
+    Cells(RowIndex + i, 23).Value = pmnt4Prin(i) / payment(i) 'principal percentage
+    Cells(RowIndex + i, 16).Select
+Next i
+
+'************************************************************
+'  OutPut all other related statistic data
+'************************************************************
+Range("H6").Value = Application.Sum(Range("S13:S" & lastrow)) 'Total Interest Expense
+Range("H7").Value = Application.Sum(Range("R13:R" & lastrow)) 'Total Payments
+
+Range("F6").Value = Application.Sum(Range("H13:H" & lastrow)) 'Total Interest Expense for constant payment
+Range("F7").Value = Application.Sum(Range("G13:G" & lastrow)) 'Total Payments for constant payment
+
+'************************************************************
+' Format OutPut Data in Table
+'************************************************************
+
+Application.Union(Range("F13:J" & lastrow), Range("Q13:U" & lastrow)).Select
+Selection.NumberFormat = "$#,##0.00"
+Application.Union(Range("K13:L" & lastrow), Range("V13:W" & lastrow)).Select
+Selection.NumberFormat = "0.00%"
+
+Application.Union(Range("D13:M" & lastrow), Range("O13:W" & lastrow)).Select
+With Selection.Interior
+    .ThemeColor = xlThemeColorAccent6
+    .PatternColorIndex = xlAutomatic
+    .TintAndShade = 0.799981688894314
+End With
+Range("D13:D" & lastrow).HorizontalAlignment = xlCenter
+Range("O13:O" & lastrow).HorizontalAlignment = xlCenter
+'---------------------------------------------------------------------------------
+' PART 3:Data Visulazation -- Plotting Charts
+
+'---------------------------------------------------------------------------------
+'************************************************************
+' Data Visulazation for Constant Payment Amortization
+'************************************************************
+Dim rng As Range
+Dim cht As Object
+'plotting component of each period (ie.beg.balance,payment, int, prin ,endBalance) changing over time
+For i = 1 To 5
+'Your data range for the chart
+  Set rng = ActiveSheet.Range("F13:F" & lastrow).Offset(0, i - 1)
+'Create a chart
+  Set cht = ActiveSheet.ChartObjects.Add( _
+    Left:=Range("N13").Left, _
+    Width:=450, _
+    Top:=Range("N13").Top, _
+    Height:=250)
+'Give chart some data
+  cht.Chart.SetSourceData Source:=rng
+'Determine the chart type
+  cht.Chart.ChartType = xlXYScatter 'xlXYScatterLinesNoMarkers
+    With cht
+        .Chart.HasTitle = True
+        .Chart.ChartTitle.Text = _
+            "The Change of " & Range("F11").Offset(0, i - 1) & Range("F12").Offset(0, i - 1)
+        .Chart.HasLegend = False
+    End With
+Next i
+
+'plotting payment for int versus payment for principal each period
+'AddChart2 Method
+Set rng = ActiveSheet.Range("H13:I" & lastrow)
+  rng.Select
+  ActiveSheet.Shapes.AddChart2(297, xlColumnStacked, Left:=Range("N13").Left, _
+     Top:=Range("N13").Top, Width:=450, Height:=250).Select
+  ActiveChart.SetSourceData Source:=rng
+  ActiveChart.ChartTitle.Text = "Payment for Interest and Principal over Periods "
+  ActiveChart.SeriesCollection(1).Name = "Interest Component"
+  ActiveChart.SeriesCollection(2).Name = "Principal Repaid"
+ 'plotting change of proportion for interest and prinipal over time
+  Set rng = ActiveSheet.Range("K13:L" & lastrow)
+'Create a chart
+  Set cht = ActiveSheet.ChartObjects.Add( _
+    Left:=Range("N13").Left, _
+    Width:=450, _
+    Top:=Range("N13").Top, _
+    Height:=250)
+With cht.Chart
+        .ChartType = xlLine
+        .SetSourceData Source:=rng
+        .HasTitle = True
+        .ChartTitle.Text = "Change of Interest and Principal Proportion"
+        .SeriesCollection(1).Name = "Int"
+        .SeriesCollection(2).Name = "Prin"
+End With
+
+'************************************************************
+' Data Visulazation for straight-line Amortization
+'************************************************************
+
+'plotting component of each period (ie.beg.balance,payment, int, prin ,endBalance) changing over time
+For i = 1 To 5
+  Set rng = ActiveSheet.Range("Q13:Q" & lastrow).Offset(0, i - 1)
+
+  Set cht = ActiveSheet.ChartObjects.Add( _
+    Left:=Range("N13").Left, _
+    Width:=450, _
+    Top:=Range("N13").Top, _
+    Height:=250)
+
+  cht.Chart.SetSourceData Source:=rng
+
+  cht.Chart.ChartType = xlXYScatter
+    With cht
+        .Chart.HasTitle = True
+        .Chart.HasLegend = False
+        .Chart.ChartTitle.Text = _
+            "The Change of " & Range("Q11").Offset(0, i - 1) & Range("Q12").Offset(0, i - 1)
+    End With
+Next i
+
+Set rng = ActiveSheet.Range("S13:T" & lastrow)
+  rng.Select
+  ActiveSheet.Shapes.AddChart2(297, xlColumnStacked, Left:=Range("N13").Left, _
+     Top:=Range("N13").Top, Width:=450, Height:=250).Select
+  ActiveChart.SetSourceData Source:=rng
+  ActiveChart.ChartTitle.Text = "Payment for Interest and Principal Over Periods "
+  ActiveChart.SeriesCollection(1).Name = "Interest Component"
+  ActiveChart.SeriesCollection(2).Name = "Principal Repaid"
+  Set rng = ActiveSheet.Range("V13:W" & lastrow)
+  Set cht = ActiveSheet.ChartObjects.Add( _
+    Left:=Range("N13").Left, _
+    Width:=450, _
+    Top:=Range("N13").Top, _
+    Height:=250)
+With cht.Chart
+        .ChartType = xlLine
+        .SetSourceData Source:=rng
+        .HasTitle = True
+        .ChartTitle.Text = "Change of Interest and Principal Proportion"
+        .SeriesCollection(1).Name = "Int"
+        .SeriesCollection(2).Name = "Prin"
+End With
+
+'************************************************************
+' formatting all charts
+'************************************************************
+Dim chtObj As ChartObject
+For Each chtObj In ActiveSheet.ChartObjects
+    If chtObj.Chart.HasLegend = True Then
+        With chtObj.Chart.Legend.Font
+            .Name = "Calibri"
+            .Size = 11
+        End With
+    End If
+    
+    With chtObj.Chart.ChartTitle
+        .Top = 0
+        .Left = 0
+        .Font.Name = "Times New Roman"
+        .Font.Size = 13
+        '.Font.Bold = False
+    End With
+
+    With chtObj.Chart.Axes(Type:=xlCategory, AxisGroup:=xlPrimary)
+        .HasTitle = True
+        .AxisTitle.Text = "Periods"
+        .AxisTitle.Font.Name = "Times New Roman"
+        .AxisTitle.Font.Size = 12
+        .AxisTitle.Font.Bold = False
+        .HasMajorGridlines = False
+        .HasMinorGridlines = False
+    End With
+    
+        With chtObj.Chart.Axes(Type:=xlValue, AxisGroup:=xlPrimary)
+        .HasMajorGridlines = False
+        .HasMinorGridlines = False
+    End With
+    
+    chtObj.Visible = False 'hide all charts
+Next
+
+
+Range("K4").Select
+
+'************************************************************
+' option button for amortization type
+'************************************************************
+If CPoption.Value = True Then
+    Range("O13:W1048576").clear
+ElseIf SLoption.Value = True Then
+    Range("D13:M1048576").clear
+End If
+
+End Sub
+
+
+'---------------------------------------------------------------------------------
+' PART 4:Displaying Dynamic Charts Using Userform
+' please refer to the code in Userform of "DisplayingDynamicCharts"
+'---------------------------------------------------------------------------------
+
+
+Private Sub PlotChart_Click()
+
+DisplayingDynamicCharts.Show
+
+End Sub
+
+'---------------------------------------------------------------------------------
+' PART 5:Supplements
+'
+'---------------------------------------------------------------------------------
+'Create New Tables in new worksheets
+Private Sub CreateNewTable_Click()
+Worksheets("LoanAmor").Activate
+Dim rename As String
+rename = Application.InputBox(prompt:="Please Name the New Worksheet")
+Sheets.Add(After:=Sheets("LoanAmor")).Name = rename
+
+If PaymentFrequency = "Monthly" Then
+    Dim numPer As Integer
+    numPer = loanLife * 12
+Else
+    numPer = loanLife
+End If
+lastrow = 13 + numPer - 1
+
+Sheets("LoanAmor").Select
+If CPoption.Value = True Then
+    Range("D10:L" & lastrow).Copy
+    Sheets(rename).Select
+    Range("A1").Select
+    ActiveSheet.Paste
+ElseIf SLoption.Value = True Then
+    Range("O10:W" & lastrow).Copy
+    Sheets(rename).Select
+    Range("A1").Select
+    ActiveSheet.Paste
+Else
+    Range("D10:W" & lastrow).Copy
+Sheets(rename).Select
+Range("A1").Select
+ActiveSheet.Paste
+End If
+
+End Sub
+
+Private Sub ScrollBar_Change()
+AmortizationCaculator.anualIntRate = AmortizationCaculator.ScrollBar.Value
+End Sub
+
+
+
+###############
+Displaying charts codes
+###############
+Public chartNum As Integer
+
+Sub getmychart()
+
+Dim currentchart As Chart
+Dim fname As String
+Dim ws As Worksheet
+Set ws = Sheets("LoanAmor")
+Set currentchart = ws.ChartObjects(chartNum).Chart
+currentchart.Parent.Width = 320
+currentchart.Parent.Height = 230
+
+    fname = ThisWorkbook.Path & "\temp.gif"
+    currentchart.Export Filename:=fname, FilterName:="GIF"
+    Image1.Picture = LoadPicture(fname)
+    
+Set currentchart = ws.ChartObjects(chartNum + 7).Chart
+currentchart.Parent.Width = 320
+currentchart.Parent.Height = 230
+
+    fname = ThisWorkbook.Path & "\temp.gif"
+    currentchart.Export Filename:=fname, FilterName:="GIF"
+    Image2.Picture = LoadPicture(fname)
+    
+End Sub
+
+Private Sub cmdExit_Click()
+Unload Me
+End Sub
+
+Private Sub cmdNext_Click()
+If chartNum = 7 Then
+    chartNum = 1
+Else
+    chartNum = chartNum + 1
+End If
+
+Call getmychart
+End Sub
+
+Private Sub cmdPrevious_Click()
+If chartNum = 1 Then
+    chartNum = 7
+Else
+    chartNum = chartNum - 1
+    End If
+Call getmychart
+End Sub
+
+
+Private Sub UserForm_Initialize()
+chartNum = 1
+Call getmychart
+End Sub
+
